@@ -1,17 +1,17 @@
-import { IPageActionHandlers, Page } from "./models";
+import { IPageActionHandlers, IPageFilterHandlers, Page } from "./models";
 import axios from "axios";
 import type { HookExtensionContext } from "@directus/extensions";
-import type { ActionHandler, EventContext } from "@directus/types";
+import type { ActionHandler, FilterHandler } from "@directus/types";
 
 function pageActionHandlers({
   env,
   logger,
   database,
 }: HookExtensionContext): IPageActionHandlers {
-  const create: ActionHandler = async (
-    { payload: { permalink: slug }, event }: Record<string, any>,
-    _: EventContext
-  ) => {
+  const create: ActionHandler = async ({
+    payload: { permalink: slug },
+    event,
+  }: Record<string, any>) => {
     try {
       const data = {
         slug,
@@ -38,8 +38,8 @@ function pageActionHandlers({
 
       logger.info("Data sent to the frontend.");
     } catch (error) {
-      logger.error("Failed to send page data to dev server.");
-      logger.child({ error });
+      const child = logger.child({ error });
+      child.error("Failed to send page data to dev server: ");
     }
   };
 
@@ -94,12 +94,48 @@ function pageActionHandlers({
         logger.info("Data sent to the frontend.");
       }
     } catch (error) {
-      logger.error("Failed to send page data to dev server.");
-      logger.child({ error });
+      const child = logger.child({ error });
+      child.error("Failed to send page data to dev server.");
     }
   };
 
   return { create, update };
 }
 
-export { pageActionHandlers };
+function pageFilterHandlers({
+  logger,
+  database,
+}: HookExtensionContext): IPageFilterHandlers {
+  const pageDelete: FilterHandler = async (payload: any) => {
+    logger.info(payload);
+    const [key, ..._] = payload;
+    const Pages = () => database("pages");
+
+    try {
+      const page = (await Pages().where("id", key).first()) as Page;
+      if (!page) throw new Error(`No page with id ${key} exists.`);
+
+      const { permalink } = page;
+
+      if (permalink.at(-1) !== "/") return payload;
+
+      await Pages()
+        .whereILike("permalink", `${permalink}%`)
+        .whereNot("permalink", permalink)
+        .del();
+
+      logger.info(
+        `Child pages for the root page with permalink of '${page.permalink}' have been deleted`
+      );
+
+      return payload;
+    } catch (error) {
+      const child = logger.child({ error });
+      child.error("Failed to send page data to dev server.");
+    }
+  };
+
+  return { pageDelete };
+}
+
+export { pageActionHandlers, pageFilterHandlers };

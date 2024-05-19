@@ -1,8 +1,12 @@
-import type { ActionHandler, EventContext } from "@directus/types";
+import type { ActionHandler, FilterHandler } from "@directus/types";
 
 interface IPageActionHandlers {
   create: ActionHandler;
   update: ActionHandler;
 }
 
-export type { IPageActionHandlers };
+interface IPageFilterHandlers {
+  pageDelete: FilterHandler;
+}
+
+export type { IPageActionHandlers, IPageFilterHandlers };
