@@ -6,3 +6,4 @@ export type * from "./help";
 export type * from "./os";
 export type * from "./schema";
 export type * from "./hooks";
+export * from "./api";

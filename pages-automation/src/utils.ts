@@ -2,6 +2,7 @@ import { IPageActionHandlers, IPageFilterHandlers, Page } from "./models";
 import axios from "axios";
 import type { HookExtensionContext } from "@directus/extensions";
 import type { ActionHandler, FilterHandler } from "@directus/types";
+import { sendDataToDev } from "./api";
 
 function pageActionHandlers({
   env,
@@ -44,29 +45,91 @@ function pageActionHandlers({
   };
 
   const update: ActionHandler = async ({
-    keys: [key, ..._],
+    keys,
     event,
     payload: { status, permalink },
   }: any) => {
+    const mayThrowMissingDevLinkError = () => {
+      if (!env?.FRONT_END_LINK.length)
+        throw new Error(
+          "Cannot send updated page changes to the dev server because the FRONT_END_LINK env is not set."
+        );
+    };
     const Pages = () => database("pages");
 
     try {
-      const page = (await Pages().where("id", key).first()) as Page;
-      if (!page) throw new Error(`No page with id ${key} exists.`);
+      const pages = (await Pages().whereIn("id", keys)) as Page[];
+      if (!pages.length) throw new Error(`No page with id in ${keys} exists.`);
 
-      if (status && status === "archived" && page.permalink.at(-1) === "/") {
-        const { permalink } = page;
-        const pages = (await Pages()
-          .whereILike("permalink", `${permalink}%`)
-          .whereNot("status", "archived")
-          .update({ status }, ["id"])) as Page[];
+      if (
+        status &&
+        status === "archived" &&
+        pages.some(({ permalink }) => permalink.at(-1) === "/")
+      ) {
+        const archivingRootPages = pages
+          .filter(({ permalink }) => permalink.at(-1) === "/")
+          .map(({ title, permalink, id }) => ({ title, permalink, id }));
+
+        for (const { permalink } of archivingRootPages) {
+          try {
+            await Pages()
+              .whereILike("permalink", `${permalink}%`)
+              .whereNot("status", status)
+              .update({ status });
+          } catch (error) {
+            const child = logger.child({ "permalink-error": error });
+            child.error(
+              `Could not archive the children pages for page with permalink: ${permalink}`
+            );
+            continue;
+          }
+        }
 
         const child = logger.child({
-          pages: pages.map(({ title, id }) => ({ title, id })),
+          pages: archivingRootPages,
         });
         child.info("Archived the following pages: ");
 
-        // TODO: Send the changed pages to the frontend
+        const data = {
+          slugs: archivingRootPages.map(({ permalink }) => permalink),
+          event,
+          status,
+        };
+
+        mayThrowMissingDevLinkError();
+        const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
+        await sendDataToDev({ data, logger, link });
+      } else if (status?.length) {
+        const statusPages = pages.map(({ title, permalink, id }) => ({
+          title,
+          permalink,
+          id,
+        }));
+
+        for (const { id } of statusPages) {
+          try {
+            await Pages().where("id", id).update({ status });
+          } catch (error) {
+            const child = logger.child({ "permalink-error": error });
+            child.error(`Could not update the status for the: ${id}.`);
+            continue;
+          }
+        }
+
+        const child = logger.child({
+          pages: statusPages,
+        });
+        child.info("Updated statuses for the following pages: ");
+
+        const data = {
+          slugs: statusPages.map(({ permalink }) => permalink),
+          event,
+          status,
+        };
+
+        mayThrowMissingDevLinkError();
+        const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
+        await sendDataToDev({ data, logger, link });
       } else if (permalink?.length) {
         const data = {
           slug: permalink,
@@ -74,25 +137,9 @@ function pageActionHandlers({
           status,
         };
 
-        const headers = {
-          "Content-Type": "application/json",
-        };
-
-        if (!env?.FRONT_END_LINK.length)
-          throw new Error(
-            "Cannot send updated page changes to the dev server because the FRONT_END_LINK env is not set."
-          );
-
-        logger.info("Sending page data to the dev server.");
+        mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
-        const request = await axios.post(link, data, {
-          headers,
-        });
-
-        if (request.status !== 200)
-          throw new Error("Could not send page data to the dev server.");
-
-        logger.info("Data sent to the frontend.");
+        await sendDataToDev({ data, logger, link });
       }
     } catch (error) {
       const child = logger.child({ error });
