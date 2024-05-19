@@ -27,7 +27,7 @@ function pageActionHandlers({
           "The FRONT_END_LINK env variable has not been set within the Directus env."
         );
 
-      const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
+      const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
       logger.info("Sending page data to the dev server.");
       const request = await axios.post(link, data, {
         headers,
@@ -71,6 +71,7 @@ function pageActionHandlers({
         const data = {
           slug: permalink,
           event,
+          status,
         };
 
         const headers = {
@@ -83,7 +84,7 @@ function pageActionHandlers({
           );
 
         logger.info("Sending page data to the dev server.");
-        const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
+        const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
         const request = await axios.post(link, data, {
           headers,
         });
