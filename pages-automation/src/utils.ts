@@ -98,7 +98,7 @@ function pageActionHandlers({
 
         mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
-        await sendDataToDev({ data, logger, link });
+        await sendDataToDev({ data, logger, link, env });
       } else if (status?.length) {
         const statusPages = pages.map(({ title, permalink, id }) => ({
           title,
@@ -129,7 +129,7 @@ function pageActionHandlers({
 
         mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
-        await sendDataToDev({ data, logger, link });
+        await sendDataToDev({ data, logger, link, env });
       } else if (permalink?.length) {
         const data = {
           slug: permalink,
@@ -139,7 +139,7 @@ function pageActionHandlers({
 
         mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
-        await sendDataToDev({ data, logger, link });
+        await sendDataToDev({ data, logger, link, env });
       }
     } catch (error) {
       const child = logger.child({ error });

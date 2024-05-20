@@ -1,2 +1,2 @@
 export * from "./global-search";
-export * from "./sedDataToDev";
+export * from "./sendDataToDev";
