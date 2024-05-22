@@ -10,7 +10,6 @@ async function sendDataToDev({ data, logger, link, env }: ISendDataToDevArgs) {
   const headers = {
     "Content-Type": "application/json",
     "x-api-key": env?.PAGE_WEB_HOOK_API_KEY ?? "",
-    origin: env?.PUBLIC_URL ?? "",
   };
 
   logger.info("Sending page data to the dev server.");
