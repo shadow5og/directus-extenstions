@@ -15,45 +15,53 @@ const fieldTypeMap = {
   file: 'string',
 };
 
-const schemaMao = {
-  text: 'string',
-  textarea: 'text',
-  checkbox: 'string',
-  radio: 'string',
-  select: 'string',
-  number: 'decimal',
-  email: 'string',
-  date: 'dateTime',
-  range: 'string',
-  tel: 'string',
-  file: 'string',
-};
-
 export default defineHook(({ filter, action }, context) => {
-  const { database, logger, services } = context;
+  const { database, logger, services, getSchema } = context;
+  const { CollectionsService, FieldsService } = services;
 
-  filter('forms.items.create', async (payload: Form) => {
-    const { key: collectionName, schema } = payload;
+  filter('forms.items.create', async (payload: Form, _, { accountability }) => {
+    const { key: collection, schema } = payload;
+    const collectionsService = new CollectionsService({
+      schema: await getSchema(),
+      accountability,
+    });
 
-    await database.schema
+    const fields = schema.map(({ name: field, type: fieldType }) => {
+      const type = fieldTypeMap[fieldType as keyof typeof fieldTypeMap];
+      return {
+        field,
+        type,
+      };
+    });
+
+    const tableExists = await database.schema
       .withSchema('public')
-      .createTable(collectionName, (table) => {
-        table.uuid('id').primary();
+      .hasTable(collection);
 
-        for (const { name, type } of schema) {
-          const dataType: string = schemaMao[type as keyof typeof schemaMao];
-          // @ts-ignoreTableBuilder
-          table[dataType](name);
-        }
+    if (!tableExists)
+      await database.schema
+        .withSchema('public')
+        .createTable(collection, (table) => {
+          table.uuid('id').primary();
 
-        logger.info(`Created a new table named ${collectionName}`);
-      });
+          for (const { field, type } of fields) {
+            // @ts-ignore
+            table[type](field);
+          }
+
+          logger.info(`Created a new table named ${collection}`);
+        });
+
+    await collectionsService.createOne({
+      collection,
+      fields,
+    });
 
     const Collections = () => database('directus_collections');
 
     // Add collection to Directus system collections
     await Collections().insert({
-      collection: collectionName,
+      collection: collection,
       singleton: false,
       sort_field: 'id',
       accountability: 'all',
@@ -66,7 +74,7 @@ export default defineHook(({ filter, action }, context) => {
     const Fields = () => database('directus_fields');
 
     await Fields().insert({
-      collection: collectionName,
+      collection: collection,
       field: 'id',
       special: 'uuid',
       interface: 'input',
@@ -82,7 +90,7 @@ export default defineHook(({ filter, action }, context) => {
       schema.map(
         async ({ name }, index) =>
           await Fields().insert({
-            collection: collectionName,
+            collection: collection,
             field: name,
             interface: 'input',
             required: true,
