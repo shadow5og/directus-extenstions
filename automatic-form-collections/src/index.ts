@@ -43,7 +43,6 @@ export default defineHook(({ filter, action }, context) => {
       };
     });
 
-    console.log(fields);
     const tableExists = await database.schema
       .withSchema('public')
       .hasTable(collection);
@@ -55,12 +54,9 @@ export default defineHook(({ filter, action }, context) => {
           table.uuid('id').defaultTo(database.fn.uuid()).primary();
 
           for (const { field, type } of fields) {
-            console.log('type: ', type);
             // @ts-ignore
             table[type](field);
           }
-
-          logger.info(`Created a new table named ${collection}`);
         });
 
     await collectionsService.createOne({
@@ -149,37 +145,37 @@ export default defineHook(({ filter, action }, context) => {
       const [data] = formCollections;
       const { key: formCollectionName } = data;
       const Fields = () => database('directus_fields');
-      const fieldsToBeDeleted = await Fields()
-        .where('collection', formCollectionName)
-        .andWhereNot('field', 'id')
-        .andWhereNot((qB) => qB.whereIn('field', fieldNames))
-        .select('field');
+      const fieldsToBeDeleted = (
+        await Fields()
+          .where('collection', formCollectionName)
+          .andWhereNot('field', 'id')
+          .andWhereNot((qB) => qB.whereIn('field', fieldNames))
+          .select('field')
+      ).map(({ field }) => field);
 
       await Fields()
         .where('collection', formCollectionName)
-        .andWhereNot('field', 'id')
-        .andWhereNot((qB) => qB.whereIn('field', fieldNames))
+        .whereIn('field', fieldsToBeDeleted)
         .del();
 
-      const existingFields = await Fields()
-        .where('collection', formCollectionName)
-        .andWhereNot('field', 'id')
-        .andWhere((qB) => qB.whereIn('field', fieldNames))
-        .select('field');
+      const existingFields = (
+        await Fields()
+          .where('collection', formCollectionName)
+          .andWhereNot('field', 'id')
+          .andWhere((qB) => qB.whereIn('field', fieldNames))
+          .select('field')
+      ).map(({ field }) => field);
 
       const potentiallyModifiedFields = preProcessedSchemaData.filter(
         ({ field }) => existingFields.includes(field)
       );
 
-      const newFields = preProcessedSchemaData
-        .filter(({ field }) => !fieldsToBeDeleted.includes(field))
-        .filter(({ field }) => !existingFields.includes(field));
+      const newFields = preProcessedSchemaData.filter(
+        ({ field }) =>
+          !fieldsToBeDeleted.includes(field) && !existingFields.includes(field)
+      );
 
-      console.log('Fields to be deleted: ', fieldsToBeDeleted);
-      console.log('New fields', newFields);
-      console.log('Potentially modifed fields', potentiallyModifiedFields);
-
-      for (const { field } of fieldsToBeDeleted) {
+      for (const field of fieldsToBeDeleted) {
         try {
           await database.schema.alterTable(
             formCollectionName,
@@ -200,10 +196,6 @@ export default defineHook(({ filter, action }, context) => {
             function (table) {
               // @ts-ignore
               table[type](field).alter();
-
-              logger.info(
-                `Updated Schema for the ${formCollectionName} table.`
-              );
             }
           );
         } catch (error: any) {
@@ -219,10 +211,6 @@ export default defineHook(({ filter, action }, context) => {
             function (table) {
               // @ts-ignore
               table[type](field);
-
-              logger.info(
-                `Updated Schema for the ${formCollectionName} table.`
-              );
             }
           );
         } catch (error: any) {
@@ -230,6 +218,8 @@ export default defineHook(({ filter, action }, context) => {
           else throw error;
         }
       }
+
+      logger.info(`Updated Schema for the ${formCollectionName} table.`);
 
       await collectionsService.updateOne(
         formCollectionName,
