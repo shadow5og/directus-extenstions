@@ -1,5 +1,13 @@
+import { createError } from '@directus/errors';
 import { defineHook } from '@directus/extensions-sdk';
 import { Form } from './models';
+
+const NoFormCollectionFoundError = createError(
+  'FORM Collection NOT FOUND',
+  'Form  collectionnot found.',
+  404
+);
+const chunkSize = 30;
 
 const fieldTypeMap = {
   text: 'string',
@@ -7,7 +15,8 @@ const fieldTypeMap = {
   checkbox: 'string',
   radio: 'string',
   select: 'string',
-  number: 'decimal',
+  number: 'float',
+  decimal: 'decimal',
   email: 'string',
   date: 'dateTime',
   range: 'string',
@@ -17,7 +26,7 @@ const fieldTypeMap = {
 
 export default defineHook(({ filter, action }, context) => {
   const { database, logger, services, getSchema } = context;
-  const { CollectionsService, FieldsService } = services;
+  const { CollectionsService } = services;
 
   filter('forms.items.create', async (payload: Form, _, { accountability }) => {
     const { key: collection, schema } = payload;
@@ -34,6 +43,7 @@ export default defineHook(({ filter, action }, context) => {
       };
     });
 
+    console.log(fields);
     const tableExists = await database.schema
       .withSchema('public')
       .hasTable(collection);
@@ -42,9 +52,10 @@ export default defineHook(({ filter, action }, context) => {
       await database.schema
         .withSchema('public')
         .createTable(collection, (table) => {
-          table.uuid('id').primary();
+          table.uuid('id').defaultTo(database.fn.uuid()).primary();
 
           for (const { field, type } of fields) {
+            console.log('type: ', type);
             // @ts-ignore
             table[type](field);
           }
@@ -65,7 +76,7 @@ export default defineHook(({ filter, action }, context) => {
       singleton: false,
       sort_field: 'id',
       accountability: 'all',
-      group: 'website',
+      group: 'form_submission_models',
       versioning: false,
       hidden: false,
       archive_app_filter: true,
@@ -74,7 +85,7 @@ export default defineHook(({ filter, action }, context) => {
     const Fields = () => database('directus_fields');
 
     await Fields().insert({
-      collection: collection,
+      collection,
       field: 'id',
       special: 'uuid',
       interface: 'input',
@@ -86,26 +97,162 @@ export default defineHook(({ filter, action }, context) => {
     });
 
     // Dynamically add fields to the new collection
-    await Promise.all(
-      schema.map(
-        async ({ name }, index) =>
-          await Fields().insert({
-            collection: collection,
-            field: name,
-            interface: 'input',
-            required: true,
-            sort: 1 + index,
-            width: 'full',
-            readonly: false,
-            hidden: false,
-          })
-      )
+    await database.batchInsert(
+      'directus_fields',
+      fields.map(({ field }, index) => ({
+        collection,
+        field,
+        interface: 'input',
+        required: true,
+        sort: 1 + index,
+        width: 'full',
+        readonly: false,
+        hidden: false,
+      })),
+      chunkSize
     );
 
     return payload;
   });
 
-  action('forms.items.update', () => {
-    console.log('Creating Item!');
+  action('forms.items.update', async (payload, { accountability }) => {
+    const {
+      keys,
+      collection,
+      payload: { schema },
+    } = payload;
+
+    if (!schema?.length) return;
+
+    const fieldNames = (schema as Form['schema']).map(({ name }) => name);
+    const collectionsService = new CollectionsService({
+      schema: await getSchema(),
+      accountability,
+    });
+    const Forms = () => database(collection);
+    const preProcessedSchemaData = (schema as Form['schema']).map(
+      ({ name: field, type: fieldType }) => {
+        const type = fieldTypeMap[fieldType as keyof typeof fieldTypeMap];
+        return {
+          field,
+          type,
+        };
+      }
+    );
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const formCollections = await Forms().where('id', key).select('key');
+
+      if (!formCollections.length) throw new NoFormCollectionFoundError();
+
+      const [data] = formCollections;
+      const { key: formCollectionName } = data;
+      const Fields = () => database('directus_fields');
+      const fieldsToBeDeleted = await Fields()
+        .where('collection', formCollectionName)
+        .andWhereNot('field', 'id')
+        .andWhereNot((qB) => qB.whereIn('field', fieldNames))
+        .select('field');
+
+      await Fields()
+        .where('collection', formCollectionName)
+        .andWhereNot('field', 'id')
+        .andWhereNot((qB) => qB.whereIn('field', fieldNames))
+        .del();
+
+      const existingFields = await Fields()
+        .where('collection', formCollectionName)
+        .andWhereNot('field', 'id')
+        .andWhere((qB) => qB.whereIn('field', fieldNames))
+        .select('field');
+
+      const potentiallyModifiedFields = preProcessedSchemaData.filter(
+        ({ field }) => existingFields.includes(field)
+      );
+
+      const newFields = preProcessedSchemaData
+        .filter(({ field }) => !fieldsToBeDeleted.includes(field))
+        .filter(({ field }) => !existingFields.includes(field));
+
+      console.log('Fields to be deleted: ', fieldsToBeDeleted);
+      console.log('New fields', newFields);
+      console.log('Potentially modifed fields', potentiallyModifiedFields);
+
+      for (const { field } of fieldsToBeDeleted) {
+        try {
+          await database.schema.alterTable(
+            formCollectionName,
+            function (table) {
+              table.dropColumn(field);
+            }
+          );
+        } catch (error: any) {
+          if (error.code === '42703') 'pass';
+          else throw error;
+        }
+      }
+
+      for (const { field, type } of potentiallyModifiedFields) {
+        try {
+          await database.schema.alterTable(
+            formCollectionName,
+            function (table) {
+              // @ts-ignore
+              table[type](field).alter();
+
+              logger.info(
+                `Updated Schema for the ${formCollectionName} table.`
+              );
+            }
+          );
+        } catch (error: any) {
+          if (error.code === '42703') 'pass';
+          else throw error;
+        }
+      }
+
+      for (const { field, type } of newFields) {
+        try {
+          await database.schema.alterTable(
+            formCollectionName,
+            function (table) {
+              // @ts-ignore
+              table[type](field);
+
+              logger.info(
+                `Updated Schema for the ${formCollectionName} table.`
+              );
+            }
+          );
+        } catch (error: any) {
+          if (error.code === '42701') 'pass';
+          else throw error;
+        }
+      }
+
+      await collectionsService.updateOne(
+        formCollectionName,
+        potentiallyModifiedFields.concat(newFields)
+      );
+
+      // // Dynamically add fields to the new collection
+      await database.batchInsert(
+        'directus_fields',
+        newFields.map(({ field }, index) => ({
+          collection: formCollectionName,
+          field,
+          interface: 'input',
+          required: true,
+          sort: 1 + index,
+          width: 'full',
+          readonly: false,
+          hidden: false,
+        })),
+        chunkSize
+      );
+
+      logger.info(`Update table ${formCollectionName}`);
+    }
   });
 });
