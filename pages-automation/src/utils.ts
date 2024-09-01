@@ -140,27 +140,53 @@ function pageActionHandlers({
 function pageFilterHandlers({
   logger,
   database,
+  env,
 }: HookExtensionContext): IPageFilterHandlers {
   const pageDelete: FilterHandler = async (payload: any) => {
-    const [key, ..._] = payload;
+    const keys = payload;
     const Pages = () => database('pages');
+    const mayThrowMissingDevLinkError = () => {
+      if (!env?.FRONT_END_LINK.length)
+        throw new Error(
+          'Cannot send updated page changes to the dev server because the FRONT_END_LINK env is not set.'
+        );
+    };
 
     try {
-      const page = (await Pages().where('id', key).first()) as Page;
-      if (!page) throw new Error(`No page with id ${key} exists.`);
+      const pages = (await Pages().whereIn('id', keys)) as Page[];
+      if (!pages.length) throw new Error(`No page with id in ${keys} exists.`);
 
-      const { permalink } = page;
+      const rootPages = pages
+        .filter(({ permalink }) => permalink.at(-1) === '/')
+        .map(({ title, permalink, id }) => ({ title, permalink, id }));
 
-      if (permalink.at(-1) !== '/') return payload;
+      for (const { permalink } of rootPages) {
+        try {
+          await Pages()
+            .whereILike('permalink', `${permalink}%`)
+            .whereNot('permalink', permalink)
+            .del();
 
-      await Pages()
-        .whereILike('permalink', `${permalink}%`)
-        .whereNot('permalink', permalink)
-        .del();
+          logger.info(
+            `Child pages for the root page with permalink of '${permalink}' have been deleted`
+          );
+        } catch (error) {
+          const child = logger.child({ 'permalink-error': error });
+          child.error(
+            `Could not delete the children pages for page with permalink: ${permalink}`
+          );
+          continue;
+        }
+      }
 
-      logger.info(
-        `Child pages for the root page with permalink of '${page.permalink}' have been deleted`
-      );
+      const data = {
+        slugs: rootPages.map(({ permalink }) => permalink),
+        event: 'pages.items.delete',
+      };
+
+      mayThrowMissingDevLinkError();
+      const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
+      await sendDataToDev({ data, logger, link, env });
 
       return payload;
     } catch (error) {
