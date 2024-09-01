@@ -1,6 +1,5 @@
 import type { HookExtensionContext } from '@directus/extensions';
 import type { ActionHandler, FilterHandler } from '@directus/types';
-import axios from 'axios';
 import { sendDataToDev } from './api';
 import { IPageActionHandlers, IPageFilterHandlers, Page } from './models';
 
@@ -19,25 +18,13 @@ function pageActionHandlers({
         event,
       };
 
-      const headers = {
-        'Content-Type': 'application/json',
-      };
-
       if (!env.FRONT_END_LINK?.length)
         throw new Error(
           'The FRONT_END_LINK env variable has not been set within the Directus env.'
         );
 
       const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
-      logger.info('Sending page data to the dev server.');
-      const request = await axios.post(link, data, {
-        headers,
-      });
-
-      if (request.status !== 200)
-        throw new Error('Could not send page data to the dev server.');
-
-      logger.info('Data sent to the frontend.');
+      await sendDataToDev({ data, logger, link, env });
     } catch (error) {
       const child = logger.child({ error });
       child.error('Failed to send page data to dev server: ');
