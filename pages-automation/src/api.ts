@@ -9,7 +9,7 @@ async function sendDataToDev({ data, logger, link, env }: ISendDataToDevArgs) {
 
   const headers = {
     'Content-Type': 'application/json',
-    'pages-webhook-api-key': env.PAGE_WEB_HOOK_API_KEY,
+    'pages-webhook-api-key': env?.PAGE_WEB_HOOK_API_KEY ?? 'no key',
   };
 
   logger.info('Sending page data to the dev server.');

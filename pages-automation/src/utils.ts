@@ -31,11 +31,8 @@ function pageActionHandlers({
     }
   };
 
-  const update: ActionHandler = async ({
-    keys,
-    event,
-    payload: { status, permalink },
-  }: any) => {
+  const update: ActionHandler = async ({ keys, event, payload }: any) => {
+    const { status, permalink } = payload;
     const mayThrowMissingDevLinkError = () => {
       if (!env?.FRONT_END_LINK.length)
         throw new Error(
@@ -49,7 +46,7 @@ function pageActionHandlers({
       if (!pages.length) throw new Error(`No page with id in ${keys} exists.`);
 
       if (
-        status &&
+        !!status &&
         status === 'archived' &&
         pages.some(({ permalink }) => permalink.at(-1) === '/')
       ) {
@@ -86,7 +83,7 @@ function pageActionHandlers({
         mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
         await sendDataToDev({ data, logger, link, env });
-      } else if (status?.length) {
+      } else if (!!status && status?.length) {
         const statusPages = pages.map(({ title, permalink, id }) => ({
           title,
           permalink,
@@ -117,15 +114,20 @@ function pageActionHandlers({
         mayThrowMissingDevLinkError();
         const link = `${env.FRONT_END_LINK}/api/webhooks/pages`;
         await sendDataToDev({ data, logger, link, env });
-      } else if (permalink?.length) {
-        const data = {
-          slug: permalink,
-          event,
-          status,
-        };
+      } else if (!!permalink && permalink?.length) {
+        const data = !!status
+          ? {
+              slug: permalink,
+              event,
+              status,
+            }
+          : {
+              slug: permalink,
+              event,
+            };
 
         mayThrowMissingDevLinkError();
-        const link = `${env.FRONT_END_LINK}/api/webhooks/page`;
+        const link = `${env?.FRONT_END_LINK}/api/webhooks/page`;
         await sendDataToDev({ data, logger, link, env });
       }
     } catch (error) {
